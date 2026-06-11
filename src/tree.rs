@@ -1,9 +1,24 @@
 use std::fmt::Display;
 
+// This is the "data structure" that we use on the outside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Tree(pub usize);
+
+impl Tree {
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
+
+
+
+// This is the data structure that actually holds the content.
+// It is only used internally in this crate.
 #[derive(Debug)]
-pub struct Node {
-    pub id: usize,
-    pub children: Vec<usize>,
+struct Node {
+    // pub id: usize,
+    pub children: Vec<Tree>,
 }
 
 #[derive(Debug)]
@@ -20,25 +35,25 @@ impl<E> TreeArena<E> {
         }
     }
 
-    pub fn add_node(&mut self, value: E, children: Vec<usize>) -> usize {
+    pub fn add_node(&mut self, value: E, children: Vec<Tree>) -> Tree {
         let index = self.nodes.len();
         self.labels.push(value);
         self.nodes.push(Node {
-            id: index,
             children: children,
         });
-        index
+
+        Tree(index)
     }
 
-    pub fn get_node(&self, index: usize) -> Option<&Node> {
-        self.nodes.get(index)
+    fn get_node(&self, tree: &Tree) -> Option<&Node> {
+        self.nodes.get(tree.index())
     }
 
-    fn map_into_rec<F>(&self, id: usize, f: &impl Fn(&E) -> F, target_arena: &mut TreeArena<F>) -> usize {
-        let node = self.get_node(id).unwrap();
-        let mapped_value = f(&self.labels[id]);
+    fn map_into_rec<F>(&self, tree: Tree, f: &impl Fn(&E) -> F, target_arena: &mut TreeArena<F>) -> Tree {
+        let node = self.get_node(&tree).unwrap();
+        let mapped_value = f(&self.labels[tree.index()]);
 
-        let mut new_children_ids : Vec<usize> = vec![];
+        let mut new_children_ids : Vec<Tree> = vec![];
 
         for child_id in &node.children {
             let mapped_child_id = self.map_into_rec(*child_id, f, target_arena);
@@ -48,8 +63,8 @@ impl<E> TreeArena<E> {
         target_arena.add_node(mapped_value, new_children_ids)
     }
 
-    pub fn map_into<'a, F>(&self, node_id: usize, f: impl Fn(&E) -> F,target_arena: &mut TreeArena<F>) -> usize {
-        self.map_into_rec(node_id, &f, target_arena)
+    pub fn map_into<'a, F>(&self, tree: Tree, f: impl Fn(&E) -> F,target_arena: &mut TreeArena<F>) -> Tree {
+        self.map_into_rec(tree, &f, target_arena)
     }
 }
 
@@ -62,14 +77,15 @@ impl<E> TreeArena<E> {
 
 pub struct TreeDisplay<'a, E: Display> {
     arena: &'a TreeArena<E>,
-    node: &'a Node,
+    tree: &'a Tree,
 }
 
 impl<E: Display> TreeDisplay<'_, E> {
-    fn write_subtree(&self, node: &Node, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn write_subtree(&self, id: &Tree, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut first = true;
+        let node = self.arena.get_node(id).unwrap();
 
-        write!(f, "{}", self.arena.labels[node.id])?;
+        write!(f, "{}", self.arena.labels[id.index()])?;
 
         if !node.children.is_empty() {
             write!(f, "(")?;
@@ -81,8 +97,8 @@ impl<E: Display> TreeDisplay<'_, E> {
                     write!(f, ", ")?;
                 }
 
-                let child = &self.arena.nodes[*child_id];
-                self.write_subtree(child, f)?;
+                // let child = &self.arena.nodes[*child_id];
+                self.write_subtree(child_id, f)?;
             }
 
             write!(f, ")")?;
@@ -93,16 +109,26 @@ impl<E: Display> TreeDisplay<'_, E> {
 
 impl<'a, E: Display> Display for TreeDisplay<'a, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.write_subtree(self.node, f)?;
+        self.write_subtree(self.tree, f)?;
         Ok(())
     }
 }
 
-impl Node {
+
+impl Tree {
     pub fn display<'a, E: Display>(&'a self, arena: &'a TreeArena<E>) -> TreeDisplay<'a, E> {
         TreeDisplay {
             arena: arena,
-            node: self,
+            tree: self,
         }
     }
 }
+
+// impl Node {
+//     pub fn display<'a, E: Display>(&'a self, arena: &'a TreeArena<E>) -> TreeDisplay<'a, E> {
+//         TreeDisplay {
+//             arena: arena,
+//             node: self,
+//         }
+//     }
+// }
