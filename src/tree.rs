@@ -153,14 +153,34 @@ impl Tree {
     }
 }
 
-// impl Node {
-//     pub fn display<'a, E: Display>(&'a self, arena: &'a TreeArena<E>) -> TreeDisplay<'a, E> {
-//         TreeDisplay {
-//             arena: arena,
-//             node: self,
-//         }
-//     }
-// }
+/// Builds a tree from nested node expressions.
+///
+/// Use `tree!(arena, ("root", "left", "right"))` to add nodes to an existing
+/// arena and receive the root `Tree`.
+#[macro_export]
+macro_rules! tree {
+    ($arena:expr, ($label:expr $(, $child:tt)* $(,)?)) => {{
+        let children = vec![
+            $(
+                $crate::tree!($arena, $child)
+            ),*
+        ];
+
+        $arena.add_node($label, children)
+    }};
+
+    ($arena:expr, $label:expr) => {{ $arena.add_node($label, vec![]) }};
+}
+
+
+
+
+
+
+
+
+///////////////////////////////////////////////////////////////
+
 
 #[cfg(test)]
 mod tests {
@@ -249,6 +269,44 @@ mod tests {
         let root = arena.add_node("root", vec![f, c]);
 
         assert_eq!(root.display(&arena).to_string(), "root(f(a, b), c)");
+    }
+
+    // Verifies that the tree! macro builds nested trees in child order.
+    #[test]
+    fn tree_macro_adds_nested_tree_to_existing_arena() {
+        let mut arena = TreeArena::new();
+
+        let root = tree!(arena, ("root", ("f", "a", "b"), "c"));
+
+        assert_eq!(root.display(&arena).to_string(), "root(f(a, b), c)");
+        assert_eq!(arena.get_label(root), &"root");
+    }
+
+    // Verifies that the tree! macro accepts normal Rust expressions as labels.
+    #[test]
+    fn tree_macro_accepts_label_expressions() {
+        let mut arena = TreeArena::new();
+        let prefix = "leaf";
+
+        let root = tree!(
+            arena,
+            (format!("{}-root", prefix), { prefix.to_string() }, {
+                String::from("right")
+            },)
+        );
+
+        assert_eq!(root.display(&arena).to_string(), "leaf-root(leaf, right)");
+    }
+
+    // Verifies that tree! works for labels other than strings.
+    #[test]
+    fn tree_macro_accepts_non_string_labels() {
+        let mut arena = TreeArena::new();
+
+        let root = tree!(arena, (1, (2, 3, 4), 5));
+
+        assert_eq!(arena.get_label(root), &1);
+        assert_eq!(root.display(&arena).to_string(), "1(2(3, 4), 5)");
     }
 
     // Verifies that repeated child references are displayed each time they appear.

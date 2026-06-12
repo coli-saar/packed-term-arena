@@ -11,7 +11,6 @@ fn main() {
     // println!("{}", arena.get_node(root).unwrap());
     println!("{}", root.display(&arena));
 
-
     let mut arena2 = tree::TreeArena::<String>::new();
     let t2 = arena.map(root, |s| s.to_uppercase(), &mut arena2);
     println!("{}", t2.display(&arena2));
