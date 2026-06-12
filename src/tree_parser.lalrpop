@@ -1,0 +1,23 @@
+use crate::parser::decode_quoted_symbol;
+use crate::tree::{Tree, TreeArena};
+
+grammar<'arena>(arena: &'arena mut TreeArena<String>);
+
+pub Tree: Tree = {
+    <label:Symbol> => arena.add_node(label, vec![]),
+    <label:Symbol> "(" <children:TreeList> ")" => arena.add_node(label, children),
+};
+
+TreeList: Vec<Tree> = {
+    <tree:Tree> => vec![tree],
+    <mut trees:TreeList> "," <tree:Tree> => {
+        trees.push(tree);
+        trees
+    },
+};
+
+Symbol: String = {
+    r"[A-Za-z0-9_-]+" => <>.to_string(),
+    r#""([^"\\]|\\["'\\nrt])*""# => decode_quoted_symbol(<>),
+    r#"'([^'\\]|\\["'\\nrt])*'"# => decode_quoted_symbol(<>),
+};
