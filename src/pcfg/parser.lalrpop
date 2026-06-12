@@ -1,0 +1,84 @@
+use crate::parser::decode_quoted_symbol;
+use crate::pcfg::{PcfgArena, Symbol};
+use super::ParsedProduction;
+
+grammar<'arena>(arena: &'arena mut PcfgArena);
+
+match {
+    r"[ \t\f]+" => { },
+} else {
+    _
+}
+
+pub Grammar: Vec<ParsedProduction> = {
+    <lines:Lines> => lines,
+};
+
+Lines: Vec<ParsedProduction> = {
+    <_leading:LineSep*> <rule:Rule> <tail:LineTail> => {
+        let mut rules = vec![rule];
+        rules.extend(tail);
+        rules
+    },
+};
+
+LineTail: Vec<ParsedProduction> = {
+    => vec![],
+    <LineSep+> => vec![],
+    <_sep:LineSep+> <rule:Rule> <tail:LineTail> => {
+        let mut rules = vec![rule];
+        rules.extend(tail);
+        rules
+    },
+};
+
+Rule: ParsedProduction = {
+    <lhs:NonTerminalName> "->" <rhs:Rhs> <prob:ProbabilityAnnotation> => {
+        let lhs = arena.intern_nonterminal(lhs);
+        let production = arena.add_production(lhs, rhs, prob.unwrap_or(0.0));
+        ParsedProduction {
+            production,
+            explicit_probability: prob,
+        }
+    },
+};
+
+Rhs: Vec<Symbol> = {
+    => vec![],
+    <symbols:SymbolList> => symbols,
+};
+
+SymbolList: Vec<Symbol> = {
+    <symbol:RhsSymbol> => vec![symbol],
+    <mut symbols:SymbolList> <symbol:RhsSymbol> => {
+        symbols.push(symbol);
+        symbols
+    },
+};
+
+RhsSymbol: Symbol = {
+    <name:NonTerminalName> => Symbol::Nonterminal(arena.intern_nonterminal(name)),
+    <value:TerminalValue> => Symbol::Terminal(arena.intern_terminal(value)),
+};
+
+NonTerminalName: String = {
+    r"[A-Za-z_][A-Za-z0-9_-]*" => <>.to_string(),
+};
+
+TerminalValue: String = {
+    r#""([^"\\]|\\["'\\nrt])*""# => decode_quoted_symbol(<>),
+    r#"'([^'\\]|\\["'\\nrt])*'"# => decode_quoted_symbol(<>),
+};
+
+Probability: f64 = {
+    r"[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?" => <>.parse().unwrap(),
+};
+
+ProbabilityAnnotation: Option<f64> = {
+    => None,
+    "[" <prob:Probability> "]" => Some(prob),
+};
+
+LineSep: () = {
+    r"\r?\n" => (),
+};

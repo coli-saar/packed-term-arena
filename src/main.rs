@@ -1,4 +1,5 @@
 use rusty_tree::parser::parse_tree;
+use rusty_tree::pcfg::{PcfgArena, parse_pcfg_file};
 use rusty_tree::tree::TreeArena;
 
 fn main() {
@@ -18,4 +19,8 @@ fn main() {
 
     let parsed = parse_tree(&mut arena, r#"f(a, "g(c)")"#).unwrap();
     println!("{}", parsed.display(&arena));
+
+    let mut pcfg_arena = PcfgArena::new();
+    let pcfg = parse_pcfg_file(&mut pcfg_arena, "examples/elephant.cfg").unwrap();
+    println!("{}", pcfg_arena);
 }

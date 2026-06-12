@@ -172,15 +172,7 @@ macro_rules! tree {
     ($arena:expr, $label:expr) => {{ $arena.add_node($label, vec![]) }};
 }
 
-
-
-
-
-
-
-
 ///////////////////////////////////////////////////////////////
-
 
 #[cfg(test)]
 mod tests {
