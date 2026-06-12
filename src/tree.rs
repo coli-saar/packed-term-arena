@@ -49,24 +49,53 @@ impl<E> TreeArena<E> {
         self.nodes.get(tree.index())
     }
 
-    fn map_into_rec<F>(&self, tree: Tree, f: &impl Fn(&E) -> F, target_arena: &mut TreeArena<F>) -> Tree {
-        let node = self.get_node(&tree).unwrap();
-        let mapped_value = f(&self.labels[tree.index()]);
-
-        let mut new_children_ids : Vec<Tree> = vec![];
-
-        for child_id in &node.children {
-            let mapped_child_id = self.map_into_rec(*child_id, f, target_arena);
-            new_children_ids.push(mapped_child_id);
-        }
-
-        target_arena.add_node(mapped_value, new_children_ids)
-    }
+    // fn map_into_rec<F>(&self, tree: Tree, f: &impl Fn(&E) -> F, target_arena: &mut TreeArena<F>) -> Tree {
+    //     let node = self.get_node(&tree).unwrap();
+    //     let mapped_value = f(&self.labels[tree.index()]);
+    //
+    //     let mut new_children_ids : Vec<Tree> = vec![];
+    //
+    //     for child_id in &node.children {
+    //         let mapped_child_id = self.map_into_rec(*child_id, f, target_arena);
+    //         new_children_ids.push(mapped_child_id);
+    //     }
+    //
+    //     target_arena.add_node(mapped_value, new_children_ids)
+    // }
 
     pub fn map_into<'a, F>(&self, tree: Tree, f: impl Fn(&E) -> F,target_arena: &mut TreeArena<F>) -> Tree {
-        self.map_into_rec(tree, &f, target_arena)
+        self.map_into_hom(tree, &f, target_arena)
+    }
+
+    pub fn map_into_hom<Op, F>(
+        &self,
+        tree: Tree,
+        f: &impl Fn(&E) -> Op,
+        hom: &mut impl MutHomomorphism<Op, F>,
+    ) -> F {
+        let node = self.get_node(&tree).unwrap();
+        let op = f(&self.labels[tree.index()]);
+
+        let new_children: Vec<F> = node.children
+            .iter()
+            .map(|child_id| self.map_into_hom(*child_id, f, hom))
+            .collect();
+
+        hom.apply(op, new_children)
     }
 }
+
+
+pub trait MutHomomorphism<Op, E> {
+    fn apply(&mut self, op: Op, children: Vec<E>) -> E;
+}
+
+impl<E> MutHomomorphism<E, Tree> for TreeArena<E> {
+    fn apply(&mut self, op: E, children: Vec<Tree>) -> Tree {
+        self.add_node(op, children.clone())
+    }
+}
+
 
 
 
