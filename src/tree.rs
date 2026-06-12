@@ -16,36 +16,36 @@ impl Tree {
 // This is the data structure that actually holds the content.
 // It is only used internally in this crate.
 #[derive(Debug)]
-struct Node {
+struct Node<E> {
     // pub id: usize,
     pub children: Vec<Tree>,
+    pub label: E
 }
 
 #[derive(Debug)]
 pub struct TreeArena<E> {
-    nodes: Vec<Node>,
-    labels: Vec<E>,
+    nodes: Vec<Node<E>>,
 }
 
 impl<E> TreeArena<E> {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            labels: Vec::new(),
         }
     }
 
     pub fn add_node(&mut self, value: E, children: Vec<Tree>) -> Tree {
         let index = self.nodes.len();
-        self.labels.push(value);
+        // self.labels.push(value);
         self.nodes.push(Node {
             children: children,
+            label: value,
         });
 
         Tree(index)
     }
 
-    fn get_node(&self, tree: &Tree) -> Option<&Node> {
+    fn get_node(&self, tree: &Tree) -> Option<&Node<E>> {
         self.nodes.get(tree.index())
     }
 
@@ -74,7 +74,7 @@ impl<E> TreeArena<E> {
         hom: &mut impl MutHomomorphism<Op, F>,
     ) -> F {
         let node = self.get_node(&tree).unwrap();
-        let op = f(&self.labels[tree.index()]);
+        let op = f(&node.label);
 
         let new_children: Vec<F> = node.children
             .iter()
@@ -114,7 +114,7 @@ impl<E: Display> TreeDisplay<'_, E> {
         let mut first = true;
         let node = self.arena.get_node(id).unwrap();
 
-        write!(f, "{}", self.arena.labels[id.index()])?;
+        write!(f, "{}", node.label)?;
 
         if !node.children.is_empty() {
             write!(f, "(")?;
