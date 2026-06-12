@@ -48,68 +48,56 @@ impl<E> TreeArena<E> {
         Tree(index)
     }
 
-    fn get_node(&self, tree: Tree) -> Option<&Node<E>> {
-        self.nodes.get(tree.index())
+    /// Given that Tree is opaque, in that the user can't create new Tree objects on the outside,
+    /// let's assume that the index exists. The one situation where this would break is when a Tree
+    /// from one arena is looked up in another arena. This could be fixed with arena IDs, but it
+    /// seems like computational overkill (the nice slice construction of get_children would
+    /// no longer work), so let's play it a little unsafe.
+    fn get_node(&self, tree: Tree) -> &Node<E> {
+        self.nodes.get(tree.index()).unwrap()
     }
 
-    fn get_label(&self, tree: Tree) -> Option<&E> {
-        self.get_node(tree).map(|node| &node.label)
+    pub fn get_label(&self, tree: Tree) -> &E {
+        &self.get_node(tree).label
     }
 
-    // TODO - do these really have to be Options?
-
-    fn get_children(&self, tree: Tree) -> Option<&[Tree]> {
-        Some(&self.children[self.get_node(tree)?.children.clone()])
+    pub fn get_children(&self, tree: Tree) -> &[Tree] {
+        &self.children[self.get_node(tree).children.clone()]
     }
 
-    // fn map_into_rec<F>(&self, tree: Tree, f: &impl Fn(&E) -> F, target_arena: &mut TreeArena<F>) -> Tree {
-    //     let node = self.get_node(&tree).unwrap();
-    //     let mapped_value = f(&self.labels[tree.index()]);
-    //
-    //     let mut new_children_ids : Vec<Tree> = vec![];
-    //
-    //     for child_id in &node.children {
-    //         let mapped_child_id = self.map_into_rec(*child_id, f, target_arena);
-    //         new_children_ids.push(mapped_child_id);
-    //     }
-    //
-    //     target_arena.add_node(mapped_value, new_children_ids)
-    // }
-
-    pub fn map<'a, F>(
+    pub fn map<Op, F>(
         &self,
         tree: Tree,
-        f: impl Fn(&E) -> F,
-        target_arena: &mut TreeArena<F>,
-    ) -> Tree {
-        self.map_into_hom(tree, &f, target_arena)
+        f: impl Fn(&E) -> Op,
+        alg: &mut impl MutAlgebra<Op, F>,
+    ) -> F {
+        self.map_int(tree, &f, alg)
     }
 
-    pub fn map_into_hom<Op, F>(
+    fn map_int<Op, F>(
         &self,
         tree: Tree,
         f: &impl Fn(&E) -> Op,
-        hom: &mut impl MutHomomorphism<Op, F>,
+        alg: &mut impl MutAlgebra<Op, F>,
     ) -> F {
-        let node = self.get_node(tree).unwrap();
+        let node = self.get_node(tree);
         let op = f(&node.label);
 
         let new_children: Vec<F> = self
             .get_children(tree)
-            .unwrap()
             .iter()
-            .map(|child_id| self.map_into_hom(*child_id, f, hom))
+            .map(|child_id| self.map_int(*child_id, f, alg))
             .collect();
 
-        hom.apply(op, new_children)
+        alg.apply(op, new_children)
     }
 }
 
-pub trait MutHomomorphism<Op, E> {
+pub trait MutAlgebra<Op, E> {
     fn apply(&mut self, op: Op, children: Vec<E>) -> E;
 }
 
-impl<E> MutHomomorphism<E, Tree> for TreeArena<E> {
+impl<E> MutAlgebra<E, Tree> for TreeArena<E> {
     fn apply(&mut self, op: E, children: Vec<Tree>) -> Tree {
         self.add_node(op, children.clone())
     }
@@ -125,14 +113,14 @@ pub struct TreeDisplay<'a, E: Display> {
 impl<E: Display> TreeDisplay<'_, E> {
     fn write_subtree(&self, id: &Tree, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut first = true;
-        let node = self.arena.get_node(*id).unwrap();
+        let node = self.arena.get_node(*id);
 
         write!(f, "{}", node.label)?;
 
         if !node.children.is_empty() {
             write!(f, "(")?;
 
-            for child_id in self.arena.get_children(*id).unwrap() {
+            for child_id in self.arena.get_children(*id) {
                 if first {
                     first = false;
                 } else {
@@ -209,11 +197,11 @@ mod tests {
         let right = arena.add_node("right", vec![]);
         let root = arena.add_node("root", vec![left, right]);
 
-        assert_eq!(arena.get_label(left), Some(&"left"));
-        assert_eq!(arena.get_label(right), Some(&"right"));
-        assert_eq!(arena.get_label(root), Some(&"root"));
-        assert_eq!(arena.get_children(left), Some(&[][..]));
-        assert_eq!(arena.get_children(root), Some(&[left, right][..]));
+        assert_eq!(arena.get_label(left), &"left");
+        assert_eq!(arena.get_label(right), &"right");
+        assert_eq!(arena.get_label(root), &"root");
+        assert_eq!(arena.get_children(left), &[][..]);
+        assert_eq!(arena.get_children(root), &[left, right][..]);
     }
 
     // Verifies that earlier child ranges still point to the same children after later inserts.
@@ -226,23 +214,19 @@ mod tests {
         let c = arena.add_node("c", vec![]);
         let second_parent = arena.add_node("second_parent", vec![c, first_parent]);
 
-        assert_eq!(arena.get_children(first_parent), Some(&[a, b][..]));
-        assert_eq!(
-            arena.get_children(second_parent),
-            Some(&[c, first_parent][..])
-        );
+        assert_eq!(arena.get_children(first_parent), &[a, b][..]);
+        assert_eq!(arena.get_children(second_parent), &[c, first_parent][..]);
     }
 
-    // Verifies that private accessors return None for a tree ID outside the arena.
+    // Verifies that infallible accessors panic for a tree ID outside the arena.
     #[test]
-    fn invalid_tree_id_returns_none_from_accessors() {
+    #[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
+    fn invalid_tree_id_panics_from_accessors() {
         let mut arena = TreeArena::new();
         arena.add_node("only", vec![]);
         let missing = Tree(99);
 
-        assert!(arena.get_node(missing).is_none());
-        assert!(arena.get_label(missing).is_none());
-        assert!(arena.get_children(missing).is_none());
+        arena.get_label(missing);
     }
 
     // Verifies the display format for a leaf node.
@@ -287,8 +271,8 @@ mod tests {
         let mapped = source.map(leaf, |value| value * 2, &mut target);
 
         assert_eq!(mapped.index(), 0);
-        assert_eq!(target.get_label(mapped), Some(&14));
-        assert_eq!(target.get_children(mapped), Some(&[][..]));
+        assert_eq!(target.get_label(mapped), &14);
+        assert_eq!(target.get_children(mapped), &[][..]);
     }
 
     // Verifies that map_into maps a nested tree while leaving the source unchanged.
@@ -328,7 +312,7 @@ mod tests {
     fn map_into_hom_uses_child_results_in_order() {
         struct PrefixHom;
 
-        impl MutHomomorphism<&'static str, String> for PrefixHom {
+        impl MutAlgebra<&'static str, String> for PrefixHom {
             fn apply(&mut self, op: &'static str, children: Vec<String>) -> String {
                 if children.is_empty() {
                     op.to_string()
@@ -346,7 +330,7 @@ mod tests {
         let root = arena.add_node("root", vec![pair, c]);
         let mut hom = PrefixHom;
 
-        let mapped = arena.map_into_hom(root, &|value| *value, &mut hom);
+        let mapped = arena.map(root, |value| *value, &mut hom);
 
         assert_eq!(mapped, "root[pair[a|b]|c]");
     }
