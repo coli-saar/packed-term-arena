@@ -5,6 +5,7 @@ use crate::tree::{Tree, TreeArena};
 
 lalrpop_util::lalrpop_mod!(tree_parser);
 
+/// Error returned when a tree string cannot be parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeParseError {
     message: String,
@@ -24,12 +25,45 @@ impl Display for TreeParseError {
 
 impl Error for TreeParseError {}
 
+/// Parse a tree term from `input` and append its nodes to `arena`.
+///
+/// The grammar accepts the same format that [`Tree::display`] produces:
+///
+/// ```text
+/// tree  ::= symbol
+///         | symbol "(" tree ("," tree)* ")"
+///
+/// symbol ::= [A-Za-z0-9_-]+          -- bare alphanumeric identifier
+///          | "'" ... "'"             -- single-quoted string
+///          | '"' ... '"'             -- double-quoted string
+/// ```
+///
+/// Quoted symbols may contain escape sequences: `\\`, `\'`, `\"`, `\n`, `\r`,
+/// `\t`.  Whitespace between tokens is ignored.
+///
+/// On success, returns a handle to the root node.  The new nodes are appended
+/// after any nodes already in `arena`, so existing handles remain valid.
+///
+/// # Errors
+///
+/// Returns [`TreeParseError`] if the input does not match the grammar —
+/// for example, if parentheses are unbalanced, a quoted symbol is
+/// unterminated, or there is trailing text after the root.
 pub fn parse_tree(arena: &mut TreeArena<String>, input: &str) -> Result<Tree, TreeParseError> {
     tree_parser::TreeParser::new()
         .parse(arena, input)
         .map_err(|error| TreeParseError::new(error.to_string()))
 }
 
+/// Decode a quoted symbol token — either `'...'` or `"..."` — into a plain
+/// `String`, processing backslash escape sequences.
+///
+/// The surrounding quote characters are stripped before processing.
+/// Supported escapes: `\\` → `\`, `\'` → `'`, `\"` → `"`,
+/// `\n` → newline, `\r` → carriage return, `\t` → tab.
+///
+/// Panics on a trailing backslash or an unsupported escape, but the LALRPOP
+/// token regex prevents those inputs from reaching this function.
 pub(crate) fn decode_quoted_symbol(input: &str) -> String {
     let content = &input[1..input.len() - 1];
     let mut output = String::with_capacity(content.len());
@@ -66,6 +100,14 @@ mod tests {
         let mut arena = TreeArena::new();
         let tree = parse_tree(&mut arena, input).unwrap();
         (arena, tree)
+    }
+
+    #[test]
+    fn parses_bare_symbol() {
+        let (arena, tree) = parse("a");
+
+        assert_eq!(arena.get_label(tree), "a");
+        assert!(arena.get_children(tree).is_empty());
     }
 
     #[test]
