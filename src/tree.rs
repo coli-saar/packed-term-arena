@@ -65,6 +65,59 @@ impl<E> TreeArena<E> {
         &self.children[self.get_node(tree).children.clone()]
     }
 
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn post_order(&self, root: Tree) -> impl Iterator<Item = Tree> + '_ {
+        let mut stack: Vec<(Tree, bool)> = Vec::with_capacity(16);
+        stack.push((root, false));
+        std::iter::from_fn(move || loop {
+            let &(node, expanded) = stack.last()?;
+            if expanded {
+                stack.pop();
+                return Some(node);
+            }
+            stack.last_mut().unwrap().1 = true;
+            for &child in self.get_children(node).iter().rev() {
+                stack.push((child, false));
+            }
+        })
+    }
+
+    /// Copy a subtree rooted at `root` into `target`, returning the new root.
+    pub fn copy_into(&self, root: Tree, target: &mut TreeArena<E>) -> Tree
+    where
+        E: Clone,
+    {
+        self.map(root, |label| label.clone(), target)
+    }
+
+    /// Duplicate a subtree within this arena, appending fresh nodes.
+    /// Returns the root of the new copy.
+    pub fn dup_subtree(&mut self, root: Tree) -> Tree
+    where
+        E: Clone,
+    {
+        let order: Vec<Tree> = self.post_order(root).collect();
+        let mut remap = std::collections::HashMap::with_capacity(order.len());
+        for node in order {
+            let new_children: Vec<Tree> = self
+                .get_children(node)
+                .iter()
+                .map(|c| remap[&c.index()])
+                .collect();
+            let label = self.get_label(node).clone();
+            let new_node = self.add_node(label, new_children);
+            remap.insert(node.index(), new_node);
+        }
+        remap[&root.index()]
+    }
+
     pub fn map<Op, F>(
         &self,
         tree: Tree,
@@ -393,5 +446,108 @@ mod tests {
         let mut target = TreeArena::new();
 
         arena.map(Tree(0), |value| *value, &mut target);
+    }
+
+    #[test]
+    fn len_and_is_empty_reflect_node_count() {
+        let mut arena = TreeArena::<&str>::new();
+        assert_eq!(arena.len(), 0);
+        assert!(arena.is_empty());
+
+        arena.add_node("a", vec![]);
+        assert_eq!(arena.len(), 1);
+        assert!(!arena.is_empty());
+
+        arena.add_node("b", vec![]);
+        assert_eq!(arena.len(), 2);
+    }
+
+    #[test]
+    fn post_order_single_node() {
+        let mut arena = TreeArena::new();
+        let leaf = arena.add_node("leaf", vec![]);
+
+        let order: Vec<Tree> = arena.post_order(leaf).collect();
+
+        assert_eq!(order, vec![leaf]);
+    }
+
+    #[test]
+    fn post_order_visits_children_before_parent() {
+        let mut arena = TreeArena::new();
+        let a = arena.add_node("a", vec![]);
+        let b = arena.add_node("b", vec![]);
+        let c = arena.add_node("c", vec![]);
+        let f = arena.add_node("f", vec![a, b]);
+        let root = arena.add_node("root", vec![f, c]);
+
+        let order: Vec<Tree> = arena.post_order(root).collect();
+
+        assert_eq!(order, vec![a, b, f, c, root]);
+    }
+
+    #[test]
+    fn copy_into_produces_independent_subtree() {
+        let mut source = TreeArena::new();
+        let child = source.add_node("child", vec![]);
+        let root = source.add_node("root", vec![child]);
+        let mut target = TreeArena::<&str>::new();
+
+        let new_root = source.copy_into(root, &mut target);
+
+        assert_eq!(target.get_label(new_root), &"root");
+        let new_child = target.get_children(new_root)[0];
+        assert_eq!(target.get_label(new_child), &"child");
+        // Independence: modifying source doesn't change target
+        assert_eq!(target.len(), 2);
+        assert_eq!(source.len(), 2);
+    }
+
+    #[test]
+    fn copy_into_appends_after_existing_target_nodes() {
+        let mut source = TreeArena::new();
+        let a = source.add_node("a", vec![]);
+        let root = source.add_node("root", vec![a]);
+        let mut target = TreeArena::new();
+        let existing = target.add_node("existing", vec![]);
+
+        let new_root = source.copy_into(root, &mut target);
+
+        assert_eq!(existing.index(), 0);
+        assert_eq!(new_root.index(), 2);
+        assert_eq!(target.get_label(new_root), &"root");
+    }
+
+    #[test]
+    fn dup_subtree_appends_copy_to_same_arena() {
+        let mut arena = TreeArena::new();
+        let a = arena.add_node("a", vec![]);
+        let b = arena.add_node("b", vec![]);
+        let root = arena.add_node("root", vec![a, b]);
+
+        let dup = arena.dup_subtree(root);
+
+        assert_eq!(arena.len(), 6); // original 3 + 3 new
+        assert_eq!(arena.get_label(dup), &"root");
+        let dup_children = arena.get_children(dup);
+        assert_ne!(dup_children[0], a);
+        assert_ne!(dup_children[1], b);
+        assert_eq!(arena.get_label(dup_children[0]), &"a");
+        assert_eq!(arena.get_label(dup_children[1]), &"b");
+    }
+
+    #[test]
+    fn dup_subtree_only_copies_reachable_nodes() {
+        let mut arena = TreeArena::new();
+        let unrelated = arena.add_node("unrelated", vec![]);
+        let a = arena.add_node("a", vec![]);
+        let root = arena.add_node("root", vec![a]);
+
+        let dup = arena.dup_subtree(root);
+
+        // unrelated + a + root + dup_a + dup_root = 5 total
+        assert_eq!(arena.len(), 5);
+        let _ = unrelated;
+        assert_eq!(arena.get_label(dup), &"root");
     }
 }
