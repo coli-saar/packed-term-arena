@@ -293,7 +293,7 @@ impl<E> TreeArena<E> {
 /// # Example: counting nodes
 ///
 /// ```rust
-/// use rusty_tree::tree::{TreeArena, MutAlgebra};
+/// use packed_term_arena::tree::{TreeArena, MutAlgebra};
 ///
 /// struct Counter;
 ///
@@ -304,7 +304,7 @@ impl<E> TreeArena<E> {
 /// }
 ///
 /// let mut arena = TreeArena::new();
-/// let root = rusty_tree::tree!(arena, ("root", ("f", "a", "b"), "c"));
+/// let root = packed_term_arena::tree!(arena, ("root", ("f", "a", "b"), "c"));
 /// let count = arena.map(root, |_| (), &mut Counter);
 /// assert_eq!(count, 5);
 /// ```
@@ -373,10 +373,10 @@ impl Tree {
     /// # Example
     ///
     /// ```rust
-    /// use rusty_tree::tree::TreeArena;
+    /// use packed_term_arena::tree::TreeArena;
     ///
     /// let mut arena = TreeArena::new();
-    /// let root = rusty_tree::tree!(arena, ("f", "a", "b"));
+    /// let root = packed_term_arena::tree!(arena, ("f", "a", "b"));
     /// assert_eq!(root.display(&arena).to_string(), "f(a, b)");
     /// ```
     pub fn display<'a, E: Display>(&'a self, arena: &'a TreeArena<E>) -> TreeDisplay<'a, E> {
@@ -401,10 +401,10 @@ impl Tree {
 /// # Example
 ///
 /// ```rust
-/// use rusty_tree::tree::TreeArena;
+/// use packed_term_arena::tree::TreeArena;
 ///
 /// let mut arena = TreeArena::new();
-/// let root = rusty_tree::tree!(arena, ("f", ("g", "a", "b"), "c"));
+/// let root = packed_term_arena::tree!(arena, ("f", ("g", "a", "b"), "c"));
 /// assert_eq!(root.display(&arena).to_string(), "f(g(a, b), c)");
 /// ```
 #[macro_export]

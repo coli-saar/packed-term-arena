@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn parses_pcfg_from_file() {
         let path =
-            std::env::temp_dir().join(format!("rusty_tree_pcfg_test_{}.pcfg", std::process::id()));
+            std::env::temp_dir().join(format!("packed_term_pcfg_test_{}.pcfg", std::process::id()));
         std::fs::write(&path, "NP -> 'dog'\nNP -> 'cat'").unwrap();
 
         let mut arena = PcfgArena::new();

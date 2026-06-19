@@ -1,93 +1,128 @@
-# rusty-tree
+# packed-term-arena
 
-An arena-based library for building, transforming, and traversing labeled trees.
+[![Crates.io](https://img.shields.io/crates/v/packed-term-arena.svg)](https://crates.io/crates/packed-term-arena)
+[![Documentation](https://docs.rs/packed-term-arena/badge.svg)](https://docs.rs/packed-term-arena)
 
-## Core concepts
+`packed-term-arena` stores labeled trees and shared term DAGs in an append-only
+arena. Nodes have small copyable handles, and every node's ordered children are
+stored together in one flat buffer.
 
-### `TreeArena<E>` and `Tree`
+The crate is designed for symbolic terms, syntax trees, grammar tooling, and
+other workloads that build structures bottom-up and then traverse, copy, or
+transform them. It deliberately does not provide deletion, reparenting, or
+in-place topology mutation.
 
-All nodes live inside a `TreeArena<E>`, where `E` is the label type.  A node is
-referenced by a `Tree` handle — a cheap, copyable index.  The arena itself owns
-all data; handles are meaningless outside the arena that created them.
+## Installation
 
-The arena is **append-only**: once a node is inserted its index, label, and
-children never change.  This means every `Tree` handle and every `&[Tree]`
-child slice stays valid for the arena's entire lifetime, even as more nodes are
-added.
+```toml
+[dependencies]
+packed-term-arena = "0.1"
+```
 
-Because children must exist before their parent (you need a `Tree` handle to
-pass as a child, and handles are only minted by `add_node`), every tree is
-naturally built bottom-up.
+The Rust crate name is `packed_term_arena`.
 
-### Building trees
-
-Use `add_node` directly, or the `tree!` macro for concise nested syntax:
+## Quick start
 
 ```rust
-use rusty_tree::tree::TreeArena;
+use packed_term_arena::tree::TreeArena;
 
 let mut arena = TreeArena::new();
 
-// bottom-up with add_node
-let a    = arena.add_node("a", vec![]);
-let b    = arena.add_node("b", vec![]);
-let root = arena.add_node("f", vec![a, b]);
+let left = arena.add_node("left", vec![]);
+let right = arena.add_node("right", vec![]);
+let root = arena.add_node("root", vec![left, right]);
 
-// same result with the macro
-let mut arena2 = TreeArena::new();
-let root2 = rusty_tree::tree!(arena2, ("f", "a", "b"));
-
-assert_eq!(root.display(&arena).to_string(), "f(a, b)");
-assert_eq!(root2.display(&arena2).to_string(), "f(a, b)");
+assert_eq!(arena.get_label(root), &"root");
+assert_eq!(arena.get_children(root), &[left, right]);
+assert_eq!(root.display(&arena).to_string(), "root(left, right)");
 ```
 
-The `tree!` macro accepts arbitrary Rust expressions as labels and supports
-arbitrary nesting with an optional trailing comma:
+The `tree!` macro provides nested construction syntax:
 
 ```rust
-let root = rusty_tree::tree!(arena2, (
-    "root",
-    ("left",  "ll", "lr"),
-    ("right", "rl", "rr"),
-));
+use packed_term_arena::tree::TreeArena;
+
+let mut arena = TreeArena::new();
+let root = packed_term_arena::tree!(
+    arena,
+    ("root", ("left", "a", "b"), ("right", "c"))
+);
+
+assert_eq!(
+    root.display(&arena).to_string(),
+    "root(left(a, b), right(c))"
+);
 ```
 
-### Accessing nodes
+## Design
+
+### Append-only, bottom-up construction
+
+A `TreeArena<E>` owns every label and child list. A `Tree` is only an opaque
+integer handle into that arena.
+
+Children must already exist when their parent is added, so structures are
+naturally built bottom-up:
+
+```text
+add leaves → add their parents → add the root
+```
+
+After insertion, a node's label and children never move or change. New trees
+can still be added to the same arena, and multiple independent roots may
+coexist there.
+
+This restricted model keeps the representation small and predictable. If an
+application needs frequent deletion, reparenting, or parent/sibling navigation,
+a mutable hierarchy crate such as `indextree` is a better fit.
+
+### Packed child storage
+
+The arena uses two main vectors:
+
+```text
+nodes:    [label + child range] [label + child range] ...
+children: [Tree, Tree, Tree, Tree, ...]
+```
+
+Each node stores a range into the shared child vector. Consequently,
+`get_children` returns an ordinary contiguous `&[Tree]`:
 
 ```rust
-arena.get_label(node)       // &E
-arena.get_children(node)    // &[Tree]  — zero-copy slice, no allocation
-arena.len()                 // usize, total node count
-arena.is_empty()            // bool
+let children: &[packed_term_arena::tree::Tree] = arena.get_children(root);
 ```
 
-### Displaying trees
+There is no per-access allocation and no sibling-link traversal. Because the
+arena is append-only, existing handles and child slices remain valid while more
+nodes are added.
+
+### Trees and shared DAGs
+
+The same `Tree` handle may appear in more than one child list. This permits
+structural sharing:
 
 ```rust
-println!("{}", root.display(&arena));  // f(a, b)
+use packed_term_arena::tree::TreeArena;
+
+let mut arena = TreeArena::new();
+let shared = arena.add_node("x", vec![]);
+let left = arena.add_node("left", vec![shared]);
+let right = arena.add_node("right", vec![shared]);
+let root = arena.add_node("root", vec![left, right]);
+
+assert_eq!(arena.get_children(left), &[shared]);
+assert_eq!(arena.get_children(right), &[shared]);
 ```
 
-Leaf nodes print as their label.  Internal nodes print as `label(c1, c2, ...)`.
-The label type must implement `Display`.
+The result is a DAG rather than a strict tree. Structural operations follow
+child edges, so a shared node is normally visited once for each occurrence.
 
-### Parsing trees
+## Features
 
-```rust
-use rusty_tree::parser::parse_tree;
+### Lazy post-order traversal
 
-let mut arena = rusty_tree::tree::TreeArena::new();
-let root = parse_tree(&mut arena, r#"f(a, "g(c)")"#).unwrap();
-```
-
-The parser accepts the same `label(c1, c2, ...)` format that `display` produces.
-Labels can be bare alphanumeric identifiers or single- or double-quoted strings
-with standard backslash escapes (`\\`, `\'`, `\"`, `\n`, `\r`, `\t`).  Parsed
-nodes are appended after any nodes already in the arena.
-
-### Traversal
-
-`post_order` returns a lazy iterator that visits each node after all its
-descendants, left subtrees before right:
+`post_order` visits children before their parent and preserves left-to-right
+child order:
 
 ```rust
 for node in arena.post_order(root) {
@@ -95,87 +130,124 @@ for node in arena.post_order(root) {
 }
 ```
 
-The iterator uses an explicit stack pre-allocated to 16 entries and does not
-collect the traversal upfront.
+The iterator uses an explicit stack and does not collect the full traversal
+before yielding nodes.
 
-### Copying subtrees
+### Bottom-up folds and transformations
 
-**Cross-arena copy** — append a subtree from one arena into another:
-
-```rust
-let mut target = TreeArena::new();
-let new_root = source.copy_into(root, &mut target);
-```
-
-**In-arena copy** — duplicate a subtree within the same arena:
+`map` is a bottom-up fold over a term. A label-mapping function produces an
+operation for each node, and a `MutAlgebra` combines that operation with the
+already-computed child results.
 
 ```rust
-let dup_root = arena.dup_subtree(root);
-// original nodes unchanged; dup_root refers to fresh nodes appended at the end
-```
-
-Both operations clone labels and preserve child structure.  They only copy
-nodes reachable from the given root.
-
-### Transformations with `map` and `MutAlgebra`
-
-`map` is a bottom-up fold (catamorphism) over a subtree.  It takes a label
-mapping function and a mutable algebra, and returns the algebra's result for
-the root:
-
-```rust
-// uppercase all labels into a new arena
-let mut target = TreeArena::new();
-let new_root = source.map(root, |label: &String| label.to_uppercase(), &mut target);
-```
-
-Implement `MutAlgebra<Op, F>` to produce any result type `F` from a tree:
-
-```rust
-use rusty_tree::tree::{TreeArena, MutAlgebra};
+use packed_term_arena::tree::{MutAlgebra, TreeArena};
 
 struct Depth;
 
 impl MutAlgebra<(), usize> for Depth {
-    fn apply(&mut self, _op: (), children: Vec<usize>) -> usize {
+    fn apply(&mut self, _label: (), children: Vec<usize>) -> usize {
         1 + children.into_iter().max().unwrap_or(0)
     }
 }
 
 let mut arena = TreeArena::new();
-let root = rusty_tree::tree!(arena, ("f", ("g", "a"), "b"));
-let depth = arena.map(root, |_| (), &mut Depth);
-assert_eq!(depth, 3);
+let root = packed_term_arena::tree!(arena, ("f", ("g", "a"), "b"));
+
+assert_eq!(arena.map(root, |_| (), &mut Depth), 3);
 ```
 
-`TreeArena<E>` itself implements `MutAlgebra<E, Tree>`, so it can serve as the
-algebra for cross-arena copy-with-transform — which is exactly what `copy_into`
-uses internally.
+A `TreeArena<E>` is itself an algebra, so the same mechanism can rebuild a term
+in another arena while changing its labels:
 
-## PCFG support
+```rust
+let mut target = TreeArena::new();
+let mapped = arena.map(root, |label| label.to_uppercase(), &mut target);
 
-The `pcfg` module provides `PcfgArena` for storing and loading probabilistic
-context-free grammars.  Productions, nonterminals, and terminals use the same
-arena-plus-opaque-handle pattern as trees.  Use `parse_pcfg` or
-`parse_pcfg_file` to load a grammar from text; probabilities may be specified
-explicitly or left implicit (in which case the remaining mass is shared equally
-among implicit rules for the same left-hand side).
+assert_eq!(mapped.display(&target).to_string(), "F(G(A), B)");
+```
 
-## Design notes
+### Copying with explicit sharing semantics
 
-**Why separate `nodes` and `children` vecs?**  Storing all child lists in one
-flat `Vec<Tree>` with per-node ranges means `get_children` returns a plain
-`&[Tree]` with no allocation or indirection.  The slice is stable because the
-vec is only ever appended to.
+Two copying operations serve different purposes:
 
-**Sharing**  The same `Tree` handle can appear as a child of multiple nodes,
-making the arena a DAG rather than a strict tree.  `post_order` visits a shared
-node once per reference (once per place it appears in a child list).  `map`
-and `copy_into` follow the same structural semantics.  `dup_subtree` creates
-independent copies of each node in the subtree, so shared structure is
-unshared in the copy.
+- `copy_into` copies a rooted structure into another arena. It follows every
+  structural occurrence, so shared nodes are unfolded.
+- `dup_subtree` duplicates a rooted structure in the same arena. Each distinct
+  source node is copied once, preserving sharing in the duplicate.
 
-**Arena identity**  `Tree` handles carry no arena tag.  Using a handle in the
-wrong arena panics if the index is out of range, or silently returns the wrong
-node if it happens to be in range.  This is an intentional tradeoff: arena
-tags would bloat every handle and make the zero-copy child slice impossible.
+Both operations append new nodes and leave existing nodes untouched.
+
+### Parsing and display
+
+`parse_tree` reads a compact term notation:
+
+```rust
+use packed_term_arena::parser::parse_tree;
+use packed_term_arena::tree::TreeArena;
+
+let mut arena = TreeArena::new();
+let root = parse_tree(&mut arena, r#"f(a, "label with spaces")"#)?;
+
+assert_eq!(arena.get_label(root), "f");
+# Ok::<(), packed_term_arena::parser::TreeParseError>(())
+```
+
+Bare labels may contain letters, digits, `_`, and `-`. Single- and
+double-quoted labels support common backslash escapes. Parsed nodes are
+appended to the supplied arena.
+
+`Tree::display` renders labels using their `Display` implementation and formats
+children as `label(child1, child2, ...)`.
+
+### Probabilistic context-free grammars
+
+The `pcfg` module provides:
+
+- interned `Nonterminal` and `Terminal` handles;
+- arena-backed productions with contiguous right-hand-side slices;
+- lookup of productions by left-hand side;
+- `parse_pcfg` and `parse_pcfg_file`;
+- explicit probabilities and automatic distribution of remaining probability
+  mass among implicit rules.
+
+```rust
+use packed_term_arena::pcfg::{parse_pcfg, PcfgArena};
+
+let mut grammar = PcfgArena::new();
+let productions = parse_pcfg(
+    &mut grammar,
+    "NP -> 'dog' [0.4]\nNP -> 'cat'\nNP -> 'mouse'",
+)?;
+
+assert_eq!(grammar.get_probability(productions[0]), 0.4);
+assert_eq!(grammar.get_probability(productions[1]), 0.3);
+assert_eq!(grammar.get_probability(productions[2]), 0.3);
+# Ok::<(), packed_term_arena::pcfg::PcfgParseError>(())
+```
+
+## Complexity and tradeoffs
+
+| Operation | Cost |
+|---|---:|
+| Add a node | `O(number of children)` |
+| Access a label | `O(1)` |
+| Access a child slice | `O(1)` |
+| Traverse or fold a rooted structure | `O(structural occurrences)` |
+| Duplicate while preserving sharing | `O(distinct reachable nodes + edges)` |
+
+The compact `Tree` handle does not contain an arena identity. Passing a handle
+to the wrong arena can panic or, if the index exists there, address the wrong
+node. This is an intentional space and layout tradeoff; callers must keep
+handles associated with their originating arena.
+
+The arena also does not track parent links or roots. Those omissions make
+shared children and cheap contiguous child access possible, but mean ancestor
+queries require application-maintained data.
+
+## Minimum supported Rust version
+
+The minimum supported Rust version is 1.85.
+
+## License
+
+Licensed under the [MIT License](LICENSE).

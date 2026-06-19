@@ -1,6 +1,6 @@
-use rusty_tree::parser::parse_tree;
-use rusty_tree::pcfg::{PcfgArena, parse_pcfg_file};
-use rusty_tree::tree::TreeArena;
+use packed_term_arena::parser::parse_tree;
+use packed_term_arena::pcfg::{PcfgArena, parse_pcfg_file};
+use packed_term_arena::tree::TreeArena;
 
 fn main() {
     println!("Hello, world!");
@@ -21,6 +21,6 @@ fn main() {
     println!("{}", parsed.display(&arena));
 
     let mut pcfg_arena = PcfgArena::new();
-    let pcfg = parse_pcfg_file(&mut pcfg_arena, "examples/elephant.cfg").unwrap();
+    let _pcfg = parse_pcfg_file(&mut pcfg_arena, "examples/elephant.cfg").unwrap();
     println!("{}", pcfg_arena);
 }
