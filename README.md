@@ -199,31 +199,6 @@ appended to the supplied arena.
 `Tree::display` renders labels using their `Display` implementation and formats
 children as `label(child1, child2, ...)`.
 
-### Probabilistic context-free grammars
-
-The `pcfg` module provides:
-
-- interned `Nonterminal` and `Terminal` handles;
-- arena-backed productions with contiguous right-hand-side slices;
-- lookup of productions by left-hand side;
-- `parse_pcfg` and `parse_pcfg_file`;
-- explicit probabilities and automatic distribution of remaining probability
-  mass among implicit rules.
-
-```rust
-use packed_term_arena::pcfg::{parse_pcfg, PcfgArena};
-
-let mut grammar = PcfgArena::new();
-let productions = parse_pcfg(
-    &mut grammar,
-    "NP -> 'dog' [0.4]\nNP -> 'cat'\nNP -> 'mouse'",
-)?;
-
-assert_eq!(grammar.get_probability(productions[0]), 0.4);
-assert_eq!(grammar.get_probability(productions[1]), 0.3);
-assert_eq!(grammar.get_probability(productions[2]), 0.3);
-# Ok::<(), packed_term_arena::pcfg::PcfgParseError>(())
-```
 
 ## Complexity and tradeoffs
 
