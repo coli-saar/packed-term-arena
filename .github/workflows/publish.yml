@@ -17,6 +17,13 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     environment: crates-io
+    env:
+      # GitHub-hosted runners occasionally see HTTP/2 framing failures while
+      # updating the sparse crates.io index. Cargo retries transient requests,
+      # and disabling multiplexing avoids the affected HTTP/2 code path.
+      CARGO_HTTP_MULTIPLEXING: "false"
+      CARGO_HTTP_TIMEOUT: "120"
+      CARGO_NET_RETRY: "10"
 
     steps:
       - name: Check out repository
@@ -31,11 +38,36 @@ jobs:
           test "${crate_name}" = "packed-term-arena"
           test "${GITHUB_REF_NAME}" = "v${crate_version}"
 
+      - name: Fetch dependencies
+        shell: bash
+        run: |
+          retry() {
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              echo "Attempt ${attempt} failed; retrying..."
+              sleep "$((attempt * 10))"
+            done
+            return 1
+          }
+
+          retry cargo fetch --locked
+
       - name: Test all targets
         run: cargo test --all-targets --locked
 
       - name: Verify package
-        run: cargo publish --dry-run --locked
+        shell: bash
+        run: |
+          retry() {
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              echo "Attempt ${attempt} failed; retrying..."
+              sleep "$((attempt * 10))"
+            done
+            return 1
+          }
+
+          retry cargo publish --dry-run --locked
 
       - name: Publish package
         run: cargo publish --locked
