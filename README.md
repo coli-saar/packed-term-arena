@@ -78,23 +78,52 @@ a mutable hierarchy crate such as `indextree` is a better fit.
 
 ### Packed child storage
 
-The arena uses two main vectors:
+“Packed” means that the tree topology is stored in two flat, growable arrays,
+not as separately allocated node objects connected by pointers. For example,
+`root(left(a, b), right(c))` is inserted bottom-up and receives these handles:
 
 ```text
-nodes:    [label + child range] [label + child range] ...
-children: [Tree, Tree, Tree, Tree, ...]
+Logical structure                 Packed arena memory
+
+          root (T5)               nodes: Vec<Node<E>>
+         /         \              ┌──────┬───────┬───────────┐
+   left (T2)     right (T4)        │ index│ label │ children  │
+    /    \           │             ├──────┼───────┼───────────┤
+ a (T0) b (T1)     c (T3)          │ T0   │ a     │ 0..0      │
+                                    │ T1   │ b     │ 0..0      │
+                                    │ T2   │ left  │ 0..2      │
+                                    │ T3   │ c     │ 2..2      │
+                                    │ T4   │ right │ 2..3      │
+                                    │ T5   │ root  │ 3..5      │
+                                    └──────┴───────┴───────────┘
+
+                                    children: Vec<Tree>
+                                    index     0    1    2    3    4
+                                    value   [ T0 | T1 | T3 | T2 | T4 ]
+                                              └ left ┘  │    └ root ┘
+                                                      right
 ```
 
-Each node stores a range into the shared child vector. Consequently,
-`get_children` returns an ordinary contiguous `&[Tree]`:
+A `Tree` is only a `usize` index into `nodes`. Each node descriptor contains
+its label and a `Range<usize>` selecting one contiguous run in `children`.
+Leaves use an empty range and require no child allocation.
+
+This layout keeps node metadata and edge handles densely packed. Sequential
+node processing walks adjacent descriptors, while iterating a node's children
+walks adjacent, pointer-sized handles. Compared with a pointer-rich tree, this
+usually means fewer allocations and indirections and gives the CPU cache and
+hardware prefetcher a much simpler access pattern. The label type `E` can
+still own heap data; it is specifically the arena's topology that is packed.
+
+Consequently, `get_children` returns an ordinary contiguous `&[Tree]`:
 
 ```rust
 let children: &[packed_term_arena::tree::Tree] = arena.get_children(root);
 ```
 
-There is no per-access allocation and no sibling-link traversal. Because the
-arena is append-only, existing handles and child slices remain valid while more
-nodes are added.
+There is no per-node child vector, per-access allocation, or sibling-link
+traversal. Because the arena is append-only, existing handles and child slices
+remain valid while more nodes are added.
 
 ### Trees and shared DAGs
 
