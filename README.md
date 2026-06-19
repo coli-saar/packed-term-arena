@@ -1,7 +1,7 @@
 # packed-term-arena
 
 [![Crates.io](https://img.shields.io/crates/v/packed-term-arena.svg)](https://crates.io/crates/packed-term-arena)
-[![Documentation](https://docs.rs/packed-term-arena/badge.svg)](https://docs.rs/packed-term-arena)
+[![Documentation](https://docs.rs/packed-term-arena/badge.svg)](https://docs.rs/packed-term-arena/latest/packed_term_arena/)
 
 `packed-term-arena` stores labeled trees and shared term DAGs in an append-only
 arena. Nodes have small copyable handles, and every node's ordered children are
