@@ -11,8 +11,8 @@ used to discard a recently appended suffix without releasing vector capacity;
 
 The crate is designed for symbolic terms, syntax trees, and other workloads
 that build structures bottom-up and then traverse, copy, or transform them. It
-deliberately does not provide arbitrary deletion, reparenting, or in-place
-topology mutation.
+does not provide arbitrary deletion or variable-arity reparenting, but callers
+may replace handles inside an existing fixed-length child slice.
 
 ## Installation
 
@@ -70,10 +70,11 @@ naturally built bottom-up:
 add leaves → add their parents → add the root
 ```
 
-After insertion, a retained node's label and children never change. New trees
-can still be added to the same arena, and multiple independent roots may
-coexist there. Rewinding to a checkpoint removes only nodes added after that
-checkpoint.
+After insertion, a retained node's label and child-list length never change.
+Individual child handles can be replaced through `get_children_mut` without
+moving any packed ranges. New trees can still be added to the same arena, and
+multiple independent roots may coexist there. Rewinding to a checkpoint
+removes only nodes added after that checkpoint.
 
 This restricted model keeps the representation small and predictable. If an
 application needs frequent deletion, reparenting, or parent/sibling navigation,
@@ -123,6 +124,9 @@ Consequently, `get_children` returns an ordinary contiguous `&[Tree]`:
 ```rust
 let children: &[packed_term_arena::tree::Tree] = arena.get_children(root);
 ```
+
+`get_children_mut` returns the corresponding fixed-length mutable slice when
+an application needs to update edges while preserving stable node handles.
 
 There is no per-node child vector, per-access allocation, or sibling-link
 traversal. Existing handles remain valid while more nodes are added. Rewinding
@@ -240,6 +244,7 @@ children as `label(child1, child2, ...)`.
 | Add a node | `O(number of children)` |
 | Access a label | `O(1)` |
 | Access a child slice | `O(1)` |
+| Replace a child handle | `O(1)` |
 | Traverse or fold a rooted structure | `O(structural occurrences)` |
 | Duplicate while preserving sharing | `O(distinct reachable nodes + edges)` |
 

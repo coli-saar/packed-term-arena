@@ -187,6 +187,16 @@ impl<E> TreeArena<E> {
         &self.children[self.get_node(tree).children.clone()]
     }
 
+    /// Return mutable access to the fixed-length child list of `tree`.
+    ///
+    /// This permits updating edges while preserving node handles and arities.
+    /// The slice cannot grow or shrink, so the packed ranges of other nodes
+    /// remain valid.
+    pub fn get_children_mut(&mut self, tree: Tree) -> &mut [Tree] {
+        let range = self.get_node(tree).children.clone();
+        &mut self.children[range]
+    }
+
     /// Return the total number of nodes in this arena.
     pub fn len(&self) -> usize {
         self.nodes.len()
@@ -704,6 +714,19 @@ mod tests {
 
         assert_eq!(arena.nodes.len(), 13);
         assert_eq!(arena.children.len(), 12);
+    }
+
+    #[test]
+    fn mutable_children_preserve_handles_and_arity() {
+        let mut arena = TreeArena::new();
+        let old = arena.add_node("old", vec![]);
+        let new = arena.add_node("new", vec![]);
+        let root = arena.add_node("root", vec![old]);
+
+        arena.get_children_mut(root)[0] = new;
+
+        assert_eq!(arena.get_children(root), &[new]);
+        assert_eq!(arena.get_label(root), &"root");
     }
 
     // Verifies that infallible accessors panic for a tree ID outside the arena.
