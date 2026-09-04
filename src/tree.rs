@@ -17,8 +17,9 @@ pub struct Tree(usize);
 impl Tree {
     /// Return the zero-based index of this node within its arena.
     ///
-    /// Indices are assigned in insertion order and never change.  They can be
-    /// used to size side tables and index into them in O(1).
+    /// Indices are assigned in insertion order. They can be used to size side
+    /// tables and index into them in O(1), but indices removed by
+    /// [`TreeArena::rewind`] may later be reused.
     pub fn index(self) -> usize {
         self.0
     }
@@ -32,6 +33,18 @@ struct Node<E> {
     pub label: E,
 }
 
+/// A position in a [`TreeArena`] to which it can later be rewound.
+///
+/// Checkpoints are arena-specific. A checkpoint must only be passed back to
+/// the arena that created it, and only while that arena has not been rewound
+/// to an earlier position. The fields are private so callers cannot construct
+/// inconsistent node and child-buffer positions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeArenaCheckpoint {
+    node_len: usize,
+    child_len: usize,
+}
+
 /// An arena that owns a forest of labeled trees.
 ///
 /// # Layout
@@ -41,9 +54,9 @@ struct Node<E> {
 /// [`Range`] into that slice.  This means:
 ///
 /// - `get_children` is a zero-copy slice reference — no allocation.
-/// - Both vecs are append-only, so every [`Tree`] handle and every `&[Tree]`
-///   child slice stays valid for the lifetime of the arena, regardless of
-///   how many more nodes are added later.
+/// - New nodes append to both vecs, so existing [`Tree`] handles remain valid
+///   as the arena grows. [`rewind`](Self::rewind) can remove a suffix and
+///   invalidate handles into that suffix.
 ///
 /// # Node identity and sharing
 ///
@@ -95,6 +108,65 @@ impl<E> TreeArena<E> {
         });
 
         Tree(index)
+    }
+
+    /// Record the arena's current append position.
+    ///
+    /// The returned checkpoint can later be supplied to [`rewind`](Self::rewind)
+    /// to discard nodes and child edges appended after this call.
+    #[must_use]
+    pub fn checkpoint(&self) -> TreeArenaCheckpoint {
+        TreeArenaCheckpoint {
+            node_len: self.nodes.len(),
+            child_len: self.children.len(),
+        }
+    }
+
+    /// Discard the suffix appended after `checkpoint`.
+    ///
+    /// Nodes that existed when the checkpoint was created remain intact.
+    /// Handles for removed nodes become invalid and must not be used. A later
+    /// insertion may reuse their indices, in which case a stale handle will
+    /// silently refer to the newly inserted node. The checkpoint must have
+    /// been created by this arena and must not lie after its current position.
+    ///
+    /// Both backing vectors retain their allocated capacities.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either saved length is greater than the corresponding current
+    /// length. Passing a checkpoint from another arena is a logical error and
+    /// is not otherwise guaranteed to be detected.
+    pub fn rewind(&mut self, checkpoint: TreeArenaCheckpoint) {
+        assert!(
+            checkpoint.node_len <= self.nodes.len(),
+            "checkpoint node position is beyond the current arena"
+        );
+        assert!(
+            checkpoint.child_len <= self.children.len(),
+            "checkpoint child position is beyond the current arena"
+        );
+        debug_assert!(
+            self.nodes[..checkpoint.node_len]
+                .iter()
+                .all(|node| node.children.end <= checkpoint.child_len),
+            "checkpoint would truncate the children of a retained node"
+        );
+
+        self.nodes.truncate(checkpoint.node_len);
+        self.children.truncate(checkpoint.child_len);
+    }
+
+    /// Remove all nodes and child edges while retaining allocated capacity.
+    ///
+    /// This is equivalent to rewinding to a checkpoint taken from a new,
+    /// empty arena. All existing [`Tree`] handles become invalid; their indices
+    /// may be reused by later insertions.
+    pub fn clear(&mut self) {
+        self.rewind(TreeArenaCheckpoint {
+            node_len: 0,
+            child_len: 0,
+        });
     }
 
     /// Return a reference to the label of `tree`.
@@ -195,8 +267,8 @@ impl<E> TreeArena<E> {
     /// of the same arena, the implementation uses two phases: a read pass to
     /// collect the traversal order (which releases the immutable borrow), then
     /// a write pass that rebuilds nodes one by one.  This is safe because the
-    /// arena is append-only — existing [`Tree`] handles and child slices remain
-    /// valid while new nodes are pushed.
+    /// this method only appends — existing [`Tree`] handles remain valid while
+    /// new nodes are pushed.
     pub fn dup_subtree(&mut self, root: Tree) -> Tree
     where
         E: Clone,
@@ -495,6 +567,143 @@ mod tests {
 
         assert_eq!(arena.get_children(first_parent), &[a, b][..]);
         assert_eq!(arena.get_children(second_parent), &[c, first_parent][..]);
+    }
+
+    #[test]
+    fn rewind_preserves_nodes_before_checkpoint() {
+        let mut arena = TreeArena::new();
+        let a = arena.add_node("a", vec![]);
+        let checkpoint = arena.checkpoint();
+        let b = arena.add_node("b", vec![]);
+        arena.add_node("f", vec![a, b]);
+
+        arena.rewind(checkpoint);
+
+        assert_eq!(arena.len(), 1);
+        assert_eq!(arena.get_label(a), &"a");
+        assert!(arena.get_children(a).is_empty());
+    }
+
+    #[test]
+    fn rewind_removes_node_and_child_buffer_suffixes() {
+        let mut arena = TreeArena::new();
+        let a = arena.add_node("a", vec![]);
+        let checkpoint = arena.checkpoint();
+        let b = arena.add_node("b", vec![]);
+        let c = arena.add_node("c", vec![]);
+        let branch = arena.add_node("branch", vec![b, c]);
+        arena.add_node("root", vec![a, branch]);
+
+        arena.rewind(checkpoint);
+
+        assert_eq!(arena.nodes.len(), checkpoint.node_len);
+        assert_eq!(arena.children.len(), checkpoint.child_len);
+        assert_eq!(arena.get_label(a), &"a");
+    }
+
+    #[test]
+    fn append_after_rewind_reuses_index_with_new_contents() {
+        let mut arena = TreeArena::new();
+        let child = arena.add_node("child", vec![]);
+        let checkpoint = arena.checkpoint();
+        let removed = arena.add_node("old", vec![]);
+
+        arena.rewind(checkpoint);
+        let replacement = arena.add_node("new", vec![child]);
+
+        assert_eq!(replacement.index(), removed.index());
+        assert_eq!(arena.get_label(replacement), &"new");
+        assert_eq!(arena.get_children(replacement), &[child]);
+    }
+
+    #[test]
+    fn rewind_to_initial_checkpoint_empties_arena() {
+        let mut arena = TreeArena::new();
+        let initial = arena.checkpoint();
+        let a = arena.add_node("a", vec![]);
+        arena.add_node("f", vec![a]);
+
+        arena.rewind(initial);
+
+        assert!(arena.is_empty());
+        assert_eq!(arena.len(), 0);
+        assert!(arena.children.is_empty());
+    }
+
+    #[test]
+    fn rewind_retains_vector_capacities() {
+        let mut arena = TreeArena::new();
+        let initial = arena.checkpoint();
+        let leaves: Vec<_> = (0..32).map(|i| arena.add_node(i, vec![])).collect();
+        arena.add_node(32, leaves);
+        let node_capacity = arena.nodes.capacity();
+        let child_capacity = arena.children.capacity();
+
+        arena.rewind(initial);
+
+        assert_eq!(arena.nodes.capacity(), node_capacity);
+        assert_eq!(arena.children.capacity(), child_capacity);
+    }
+
+    #[test]
+    fn clear_empties_arena_and_retains_vector_capacities() {
+        let mut arena = TreeArena::new();
+        let leaves: Vec<_> = (0..32).map(|i| arena.add_node(i, vec![])).collect();
+        let stale_leaf = leaves[0];
+        arena.add_node(32, leaves);
+        let node_capacity = arena.nodes.capacity();
+        let child_capacity = arena.children.capacity();
+
+        arena.clear();
+
+        assert!(arena.is_empty());
+        assert_eq!(arena.len(), 0);
+        assert!(arena.children.is_empty());
+        assert_eq!(arena.nodes.capacity(), node_capacity);
+        assert_eq!(arena.children.capacity(), child_capacity);
+
+        let replacement = arena.add_node(33, vec![]);
+        assert_eq!(replacement.index(), 0);
+        assert_eq!(replacement.index(), stale_leaf.index());
+        assert_eq!(arena.get_label(replacement), &33);
+    }
+
+    #[test]
+    #[should_panic(expected = "checkpoint node position is beyond the current arena")]
+    fn rewind_rejects_node_position_beyond_current_arena() {
+        let mut arena = TreeArena::<&str>::new();
+        arena.rewind(TreeArenaCheckpoint {
+            node_len: 1,
+            child_len: 0,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "checkpoint child position is beyond the current arena")]
+    fn rewind_rejects_child_position_beyond_current_arena() {
+        let mut arena = TreeArena::new();
+        arena.add_node("leaf", vec![]);
+        arena.rewind(TreeArenaCheckpoint {
+            node_len: 1,
+            child_len: 1,
+        });
+    }
+
+    #[test]
+    fn checkpoint_tracks_distinct_node_and_child_positions() {
+        let mut arena = TreeArena::new();
+        let leaves: Vec<_> = (0..12).map(|i| arena.add_node(i, vec![])).collect();
+        arena.add_node(12, leaves);
+        let checkpoint = arena.checkpoint();
+        assert_eq!(checkpoint.node_len, 13);
+        assert_eq!(checkpoint.child_len, 12);
+
+        let later_leaves: Vec<_> = (13..21).map(|i| arena.add_node(i, vec![])).collect();
+        arena.add_node(21, later_leaves);
+        arena.rewind(checkpoint);
+
+        assert_eq!(arena.nodes.len(), 13);
+        assert_eq!(arena.children.len(), 12);
     }
 
     // Verifies that infallible accessors panic for a tree ID outside the arena.

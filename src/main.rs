@@ -1,5 +1,4 @@
 use packed_term_arena::parser::parse_tree;
-use packed_term_arena::pcfg::{PcfgArena, parse_pcfg_file};
 use packed_term_arena::tree::TreeArena;
 
 fn main() {
@@ -19,8 +18,4 @@ fn main() {
 
     let parsed = parse_tree(&mut arena, r#"f(a, "g(c)")"#).unwrap();
     println!("{}", parsed.display(&arena));
-
-    let mut pcfg_arena = PcfgArena::new();
-    let _pcfg = parse_pcfg_file(&mut pcfg_arena, "examples/elephant.cfg").unwrap();
-    println!("{}", pcfg_arena);
 }

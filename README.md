@@ -3,14 +3,16 @@
 [![Crates.io](https://img.shields.io/crates/v/packed-term-arena.svg?cacheSeconds=300)](https://crates.io/crates/packed-term-arena)
 [![Documentation](https://img.shields.io/docsrs/packed-term-arena/latest?cacheSeconds=300)](https://docs.rs/packed-term-arena/latest/packed_term_arena/)
 
-`packed-term-arena` stores labeled trees and shared term DAGs in an append-only
-arena. Nodes have small copyable handles, and every node's ordered children are
-stored together in one flat buffer.
+`packed-term-arena` stores labeled trees and shared term DAGs in an
+append-oriented arena. Nodes have small copyable handles, and every node's
+ordered children are stored together in one flat buffer. A checkpoint can be
+used to discard a recently appended suffix without releasing vector capacity;
+`clear()` does the same for the whole arena.
 
-The crate is designed for symbolic terms, syntax trees, grammar tooling, and
-other workloads that build structures bottom-up and then traverse, copy, or
-transform them. It deliberately does not provide deletion, reparenting, or
-in-place topology mutation.
+The crate is designed for symbolic terms, syntax trees, and other workloads
+that build structures bottom-up and then traverse, copy, or transform them. It
+deliberately does not provide arbitrary deletion, reparenting, or in-place
+topology mutation.
 
 ## Installation
 
@@ -56,7 +58,7 @@ assert_eq!(
 
 ## Design
 
-### Append-only, bottom-up construction
+### Append-oriented, bottom-up construction
 
 A `TreeArena<E>` owns every label and child list. A `Tree` is only an opaque
 integer handle into that arena.
@@ -68,9 +70,10 @@ naturally built bottom-up:
 add leaves → add their parents → add the root
 ```
 
-After insertion, a node's label and children never move or change. New trees
+After insertion, a retained node's label and children never change. New trees
 can still be added to the same arena, and multiple independent roots may
-coexist there.
+coexist there. Rewinding to a checkpoint removes only nodes added after that
+checkpoint.
 
 This restricted model keeps the representation small and predictable. If an
 application needs frequent deletion, reparenting, or parent/sibling navigation,
@@ -122,8 +125,9 @@ let children: &[packed_term_arena::tree::Tree] = arena.get_children(root);
 ```
 
 There is no per-node child vector, per-access allocation, or sibling-link
-traversal. Because the arena is append-only, existing handles and child slices
-remain valid while more nodes are added.
+traversal. Existing handles remain valid while more nodes are added. Rewinding
+invalidates handles in the removed suffix; an invalidated index may later be
+reused by a newly appended node.
 
 ### Trees and shared DAGs
 
