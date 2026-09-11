@@ -18,7 +18,7 @@ may replace handles inside an existing fixed-length child slice.
 
 ```toml
 [dependencies]
-packed-term-arena = "0.1"
+packed-term-arena = "0.1.3"
 ```
 
 The Rust crate name is `packed_term_arena`.
@@ -30,9 +30,9 @@ use packed_term_arena::tree::TreeArena;
 
 let mut arena = TreeArena::new();
 
-let left = arena.add_node("left", vec![]);
-let right = arena.add_node("right", vec![]);
-let root = arena.add_node("root", vec![left, right]);
+let left = arena.add_leaf("left");
+let right = arena.add_leaf("right");
+let root = arena.add_binary("root", left, right);
 
 assert_eq!(arena.get_label(root), &"root");
 assert_eq!(arena.get_children(root), &[left, right]);
@@ -155,6 +155,33 @@ The result is a DAG rather than a strict tree. Structural operations follow
 child edges, so a shared node is normally visited once for each occurrence.
 
 ## Features
+
+### Allocation-free node construction
+
+When the children are already available as a slice, `add_node_from_slice`
+copies them directly into the arena's packed child storage and avoids creating
+a temporary `Vec<Tree>`. Convenience methods cover the most common fixed
+arities without a temporary child collection:
+
+```rust
+use packed_term_arena::tree::TreeArena;
+
+let mut arena = TreeArena::new();
+let left = arena.add_leaf("left");
+let right = arena.add_leaf("right");
+let unary = arena.add_unary("unary", left);
+let binary = arena.add_binary("binary", unary, right);
+
+let children = [left, binary, right];
+let root = arena.add_node_from_slice("root", &children);
+
+assert_eq!(arena.get_children(root), &children);
+```
+
+These methods avoid a separate heap allocation for a caller-owned child
+vector. The arena's internal packed buffers may still grow and reallocate as
+nodes and edges are appended. The original `add_node(label, Vec<Tree>)`
+remains useful when the caller already owns a dynamically constructed vector.
 
 ### Lazy post-order traversal
 
