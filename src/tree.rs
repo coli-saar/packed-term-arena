@@ -96,10 +96,20 @@ impl<E> TreeArena<E> {
     /// The children are appended to the shared child list in the order given,
     /// preserving left-to-right semantics.
     pub fn add_node(&mut self, label: E, children: Vec<Tree>) -> Tree {
+        self.add_node_from_slice(label, &children)
+    }
+
+    /// Insert a new node by copying an ordered child slice directly into the
+    /// arena's shared child storage.
+    ///
+    /// Unlike [`add_node`](Self::add_node), this does not require callers with
+    /// stack- or arena-backed child lists to allocate a temporary `Vec`.
+    /// Children must already live in this arena.
+    pub fn add_node_from_slice(&mut self, label: E, children: &[Tree]) -> Tree {
         let index = self.nodes.len();
 
         let children_start = self.children.len();
-        self.children.extend_from_slice(&children);
+        self.children.extend_from_slice(children);
         let children_end = self.children.len();
 
         self.nodes.push(Node {
@@ -108,6 +118,24 @@ impl<E> TreeArena<E> {
         });
 
         Tree(index)
+    }
+
+    /// Insert a leaf node without constructing a child collection.
+    #[inline]
+    pub fn add_leaf(&mut self, label: E) -> Tree {
+        self.add_node_from_slice(label, &[])
+    }
+
+    /// Insert a unary node without allocating a temporary child vector.
+    #[inline]
+    pub fn add_unary(&mut self, label: E, child: Tree) -> Tree {
+        self.add_node_from_slice(label, &[child])
+    }
+
+    /// Insert a binary node without allocating a temporary child vector.
+    #[inline]
+    pub fn add_binary(&mut self, label: E, left: Tree, right: Tree) -> Tree {
+        self.add_node_from_slice(label, &[left, right])
     }
 
     /// Record the arena's current append position.
@@ -533,6 +561,21 @@ mod tests {
         assert_eq!(first.index(), 0);
         assert_eq!(second.index(), 1);
         assert_eq!(third.index(), 2);
+    }
+
+    #[test]
+    fn fixed_arity_and_slice_insertion_preserve_children() {
+        let mut arena = TreeArena::new();
+        let left = arena.add_leaf("left");
+        let right = arena.add_leaf("right");
+        let unary = arena.add_unary("unary", left);
+        let binary = arena.add_binary("binary", left, right);
+        let from_slice = arena.add_node_from_slice("slice", &[right, unary]);
+
+        assert_eq!(arena.get_children(left), &[]);
+        assert_eq!(arena.get_children(unary), &[left]);
+        assert_eq!(arena.get_children(binary), &[left, right]);
+        assert_eq!(arena.get_children(from_slice), &[right, unary]);
     }
 
     // Verifies that labels and child slices are stored for leaves and parents.
