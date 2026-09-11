@@ -252,17 +252,19 @@ impl<E> TreeArena<E> {
     pub fn post_order(&self, root: Tree) -> impl Iterator<Item = Tree> + '_ {
         let mut stack: Vec<(Tree, bool)> = Vec::with_capacity(16);
         stack.push((root, false));
-        std::iter::from_fn(move || loop {
-            let &(node, expanded) = stack.last()?;
-            if expanded {
-                stack.pop();
-                return Some(node);
-            }
-            // Mark this node as expanded and push its children right-to-left
-            // so the leftmost child is on top of the stack.
-            stack.last_mut().unwrap().1 = true;
-            for &child in self.get_children(node).iter().rev() {
-                stack.push((child, false));
+        std::iter::from_fn(move || {
+            loop {
+                let &(node, expanded) = stack.last()?;
+                if expanded {
+                    stack.pop();
+                    return Some(node);
+                }
+                // Mark this node as expanded and push its children right-to-left
+                // so the leftmost child is on top of the stack.
+                stack.last_mut().unwrap().1 = true;
+                for &child in self.get_children(node).iter().rev() {
+                    stack.push((child, false));
+                }
             }
         })
     }
@@ -988,7 +990,10 @@ mod tests {
         let mut arena = TreeArena::new();
         let root = tree!(arena, ("root", ("f", "a", "b"), "c"));
 
-        let labels: Vec<&str> = arena.post_order(root).map(|n| *arena.get_label(n)).collect();
+        let labels: Vec<&str> = arena
+            .post_order(root)
+            .map(|n| *arena.get_label(n))
+            .collect();
 
         assert_eq!(labels, vec!["a", "b", "f", "c", "root"]);
     }
@@ -999,7 +1004,10 @@ mod tests {
         let mut arena = TreeArena::new();
         let root = tree!(arena, ("a", ("b", ("c", "d"))));
 
-        let labels: Vec<&str> = arena.post_order(root).map(|n| *arena.get_label(n)).collect();
+        let labels: Vec<&str> = arena
+            .post_order(root)
+            .map(|n| *arena.get_label(n))
+            .collect();
 
         assert_eq!(labels, vec!["d", "c", "b", "a"]);
     }
